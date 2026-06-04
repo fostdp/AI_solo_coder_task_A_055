@@ -1,0 +1,15 @@
+{
+  "name": "water-leak-monitoring-system",
+  "version": "1.0.0",
+  "description": "城市供水管网漏损监测系统",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2",
+    "pg": "^8.11.3",
+    "express": "^4.18.2"
+  }
+}

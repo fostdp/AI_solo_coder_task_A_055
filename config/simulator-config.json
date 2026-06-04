@@ -1,0 +1,119 @@
+{
+  "reportIntervalMs": 3000,
+  "anomalyInjectionInterval": 10,
+  "anomalyInjectionChance": 0.3,
+  "globalDefaults": {
+    "basePressure": 0.35,
+    "pressureNoise": 0.01,
+    "pressureDrift": 0.002,
+    "baseFlow": 15,
+    "flowNoise": 1.0,
+    "flowDrift": 0.5
+  },
+  "typeDefaults": {
+    "plant": {
+      "basePressure": 0.40,
+      "baseFlow": 120,
+      "flowNoise": 3.0,
+      "pressureNoise": 0.008,
+      "pressureDrift": 0.001,
+      "flowDrift": 0.3
+    },
+    "pump": {
+      "basePressure": 0.38,
+      "baseFlow": 65,
+      "flowNoise": 2.0,
+      "pressureNoise": 0.01,
+      "pressureDrift": 0.002,
+      "flowDrift": 0.4
+    },
+    "pressure_station": {
+      "basePressure": 0.35,
+      "baseFlow": 40,
+      "flowNoise": 1.5,
+      "pressureNoise": 0.012,
+      "pressureDrift": 0.002,
+      "flowDrift": 0.5
+    },
+    "junction": {
+      "basePressure": 0.32,
+      "baseFlow": 12,
+      "flowNoise": 1.0,
+      "pressureNoise": 0.015,
+      "pressureDrift": 0.003,
+      "flowDrift": 0.6
+    },
+    "valve": {
+      "basePressure": 0.30,
+      "baseFlow": 8,
+      "flowNoise": 0.8,
+      "pressureNoise": 0.012,
+      "pressureDrift": 0.002,
+      "flowDrift": 0.4
+    },
+    "hydrant": {
+      "basePressure": 0.28,
+      "baseFlow": 5,
+      "flowNoise": 0.5,
+      "pressureNoise": 0.01,
+      "pressureDrift": 0.001,
+      "flowDrift": 0.3
+    }
+  },
+  "nodeOverrides": {
+    "N0001": {
+      "basePressure": 0.42,
+      "baseFlow": 130
+    },
+    "N0002": {
+      "basePressure": 0.41,
+      "baseFlow": 115
+    },
+    "N0003": {
+      "basePressure": 0.38,
+      "baseFlow": 70
+    }
+  },
+  "anomalyProfiles": {
+    "burst": {
+      "pressureDropRate": { "min": 0.03, "max": 0.05 },
+      "flowIncreaseRate": { "min": 5, "max": 10 },
+      "duration": { "min": 6, "max": 12 }
+    },
+    "leak": {
+      "flowOffsetRatio": { "min": 0.2, "max": 0.5 },
+      "duration": { "min": 20, "max": 40 }
+    }
+  },
+  "dailyPattern": {
+    "enabled": true,
+    "curve": [
+      { "hour": 0,  "factor": 0.40 },
+      { "hour": 2,  "factor": 0.30 },
+      { "hour": 4,  "factor": 0.25 },
+      { "hour": 5,  "factor": 0.35 },
+      { "hour": 6,  "factor": 0.60 },
+      { "hour": 7,  "factor": 0.90 },
+      { "hour": 8,  "factor": 1.00 },
+      { "hour": 9,  "factor": 0.95 },
+      { "hour": 10, "factor": 0.85 },
+      { "hour": 11, "factor": 0.80 },
+      { "hour": 12, "factor": 0.75 },
+      { "hour": 13, "factor": 0.80 },
+      { "hour": 14, "factor": 0.85 },
+      { "hour": 15, "factor": 0.80 },
+      { "hour": 16, "factor": 0.75 },
+      { "hour": 17, "factor": 0.85 },
+      { "hour": 18, "factor": 1.00 },
+      { "hour": 19, "factor": 0.95 },
+      { "hour": 20, "factor": 0.85 },
+      { "hour": 21, "factor": 0.70 },
+      { "hour": 22, "factor": 0.55 },
+      { "hour": 23, "factor": 0.45 },
+      { "hour": 24, "factor": 0.40 }
+    ],
+    "weekendFactor": 0.75,
+    "pressureFollowsFlow": true,
+    "pressureFactorScale": 0.3
+  }
+}

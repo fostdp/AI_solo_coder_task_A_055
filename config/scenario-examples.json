@@ -1,0 +1,47 @@
+{
+  "scenarios": [
+    {
+      "name": "单节点爆管演练",
+      "description": "模拟N0010节点发生爆管，验证爆管告警检测",
+      "steps": [
+        {"action": "inject_burst", "nodeId": "N0010", "delay": 0}
+      ]
+    },
+    {
+      "name": "区域漏损演练",
+      "description": "在多个支管节点注入漏损，验证漏损分析引擎",
+      "steps": [
+        {"action": "inject_leak", "nodeId": "N0015", "delay": 0},
+        {"action": "inject_leak", "nodeId": "N0018", "delay": 3},
+        {"action": "inject_leak", "nodeId": "N0022", "delay": 6}
+      ]
+    },
+    {
+      "name": "压力骤降测试",
+      "description": "手动设置节点压力，验证压力告警阈值",
+      "steps": [
+        {"action": "set_pressure", "nodeId": "N0005", "value": 0.10, "delay": 0},
+        {"action": "set_pressure", "nodeId": "N0006", "value": 0.08, "delay": 2}
+      ]
+    },
+    {
+      "name": "综合故障演练",
+      "description": "模拟复杂管网故障场景",
+      "steps": [
+        {"action": "inject_burst", "nodeId": "N0012", "delay": 0},
+        {"action": "inject_leak", "nodeId": "N0020", "delay": 5},
+        {"action": "set_flow", "nodeId": "N0003", "value": 120, "delay": 8},
+        {"action": "inject_leak", "nodeId": "N0025", "delay": 12}
+      ]
+    },
+    {
+      "name": "夜间漏损检测演练",
+      "description": "在多个节点持续注入漏损，验证夜间最小流量分析",
+      "steps": [
+        {"action": "inject_leak", "nodeId": "N0008", "delay": 0},
+        {"action": "inject_leak", "nodeId": "N0014", "delay": 0},
+        {"action": "inject_leak", "nodeId": "N0021", "delay": 0}
+      ]
+    }
+  ]
+}
