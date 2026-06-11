@@ -43,6 +43,9 @@ type EtherCATSimulator struct {
 	totalSent     uint64
 	alertCounter  uint64
 	historicStart time.Time
+	rng           *rand.Rand
+	httpClient    *http.Client
+	sendSem       chan struct{}
 }
 
 var relicSensorLayout = []struct {
@@ -60,6 +63,9 @@ func NewEtherCATSimulator(apiEndpoint string, interval time.Duration) *EtherCATS
 		interval:      interval,
 		stopChan:      make(chan struct{}),
 		historicStart: time.Now().AddDate(0, -1, 0),
+		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		sendSem:       make(chan struct{}, 2),
 	}
 	sim.initSensors()
 	return sim
@@ -71,26 +77,26 @@ func (s *EtherCATSimulator) initSensors() {
 
 	for _, layout := range relicSensorLayout {
 		for i := 0; i < layout.Ultrasonic; i++ {
-			baseV := 0.3 + rand.Float64()*1.5
+			baseV := 0.3 + s.rng.Float64()*1.5
 			s.sensors = append(s.sensors, &SensorConfig{
 				ID:           nextUS,
 				RelicID:      layout.RelicID,
 				Type:         "ultrasonic",
 				BaseValue:    baseV,
-				DriftRate:    0.0005 + rand.Float64()*0.0015,
+				DriftRate:    0.0005 + s.rng.Float64()*0.0015,
 				CurrentValue: baseV,
 				LastUpdate:   s.historicStart,
 			})
 			nextUS++
 		}
 		for i := 0; i < layout.Roughness; i++ {
-			baseV := 5.0 + rand.Float64()*20.0
+			baseV := 5.0 + s.rng.Float64()*20.0
 			s.sensors = append(s.sensors, &SensorConfig{
 				ID:           nextRT,
 				RelicID:      layout.RelicID,
 				Type:         "roughness",
 				BaseValue:    baseV,
-				DriftRate:    0.01 + rand.Float64()*0.05,
+				DriftRate:    0.01 + s.rng.Float64()*0.05,
 				CurrentValue: baseV,
 				LastUpdate:   s.historicStart,
 			})
@@ -105,11 +111,11 @@ func (s *EtherCATSimulator) simulateValue(sensor *SensorConfig, ts time.Time) fl
 	diurnalCycle := math.Sin(2*math.Pi*float64(ts.Hour())/24) * 0.08
 	seasonalCycle := math.Sin(2*math.Pi*float64(ts.YearDay())/365) * 0.12
 	growthTrend := sensor.DriftRate * hoursElapsed
-	randomNoise := (rand.Float64() - 0.5) * 0.1
+	randomNoise := (s.rng.Float64() - 0.5) * 0.1
 
 	anomaly := 0.0
-	if rand.Float64() < 0.005 {
-		anomaly = rand.Float64() * 1.5
+	if s.rng.Float64() < 0.005 {
+		anomaly = s.rng.Float64() * 1.5
 		zap.L().Warn(fmt.Sprintf("Sensor %d anomaly spike generated", sensor.ID))
 	}
 
@@ -131,7 +137,7 @@ func (s *EtherCATSimulator) simulateValue(sensor *SensorConfig, ts time.Time) fl
 func (s *EtherCATSimulator) generateSO2(relicID uint64, ts time.Time) float32 {
 	base := 10.0 + float64(relicID)*2.5
 	seasonal := 8.0 * math.Sin(2*math.Pi*float64(ts.YearDay())/365+1.5)
-	random := (rand.Float64() - 0.3) * 5.0
+	random := (s.rng.Float64() - 0.3) * 5.0
 	return float32(math.Max(0, base+seasonal+random))
 }
 
@@ -142,7 +148,7 @@ func (s *EtherCATSimulator) generateHumidity(relicID uint64, ts time.Time) float
 	}
 	base := baseHumidity[relicID]
 	diurnal := -10.0 * math.Sin(2*math.Pi*float64(ts.Hour()-6)/24)
-	random := (rand.Float64() - 0.5) * 8.0
+	random := (s.rng.Float64() - 0.5) * 8.0
 	h := base + diurnal + random
 	return float32(math.Max(10, math.Min(98, h)))
 }
@@ -155,7 +161,7 @@ func (s *EtherCATSimulator) generateTemperature(relicID uint64, ts time.Time) fl
 	base := baseTemp[relicID]
 	seasonal := 15.0 * math.Sin(2*math.Pi*(float64(ts.YearDay())-80)/365)
 	diurnal := 6.0 * math.Sin(2*math.Pi*float64(ts.Hour()-14)/24)
-	random := (rand.Float64() - 0.5) * 2.0
+	random := (s.rng.Float64() - 0.5) * 2.0
 	return float32(base + seasonal + diurnal + random)
 }
 
@@ -205,7 +211,7 @@ func (s *EtherCATSimulator) sendBatch(batch []SensorData) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-EtherCAT-Node", fmt.Sprintf("sim-node-%d", time.Now().Unix()%100))
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.httpClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -271,17 +277,39 @@ func (s *EtherCATSimulator) Start() {
 	statsTicker := time.NewTicker(1 * time.Minute)
 	defer statsTicker.Stop()
 
+	var prevSendTime time.Time
+
 	for {
 		select {
 		case ts := <-ticker.C:
+			if !prevSendTime.IsZero() && ts.Sub(prevSendTime) < s.interval-time.Second {
+				continue
+			}
+
 			batch := s.generateBatch(ts)
-			go func(b []SensorData) {
-				if err := s.sendBatch(b); err != nil {
-					zap.L().Error("Send batch failed", zap.Error(err), zap.Time("timestamp", b[0].Timestamp))
-				} else {
-					zap.L().Debug(fmt.Sprintf("Sent EtherCAT batch: %d samples at %s", len(b), b[0].Timestamp.Format("15:04:05")))
-				}
-			}(batch)
+			prevSendTime = ts
+
+			select {
+			case s.sendSem <- struct{}{}:
+				go func(b []SensorData, sem chan struct{}) {
+					defer func() {
+						<-sem
+						if r := recover(); r != nil {
+							zap.L().Error("EtherCAT send goroutine panic recovered",
+								zap.Any("recover", r),
+								zap.Int("batch_size", len(b)))
+						}
+					}()
+					if err := s.sendBatch(b); err != nil {
+						zap.L().Error("Send batch failed", zap.Error(err), zap.Time("timestamp", b[0].Timestamp))
+					} else {
+						zap.L().Debug(fmt.Sprintf("Sent EtherCAT batch: %d samples at %s", len(b), b[0].Timestamp.Format("15:04:05")))
+					}
+				}(batch, s.sendSem)
+			default:
+				zap.L().Warn("Send semaphore full, skipping batch to prevent jitter",
+					zap.Int("batch_size", len(batch)))
+			}
 
 		case <-statsTicker.C:
 			s.mu.Lock()
@@ -315,9 +343,6 @@ func main() {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
-
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	_ = rng
 
 	endpoint := "http://127.0.0.1:8080"
 	interval := 10 * time.Second
