@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"go.uber.org/zap"
-	"stone-relic-monitor/internal/alert"
 	"stone-relic-monitor/internal/config"
 	"stone-relic-monitor/internal/db"
 	"stone-relic-monitor/internal/models"
@@ -17,16 +16,14 @@ type _context_key string
 type MonitorService struct {
 	cfg          *config.Config
 	db           *db.ClickHouse
-	alertService *alert.AlertService
 	stopChan     chan struct{}
 	mu           sync.Mutex
 }
 
-func NewMonitorService(cfg *config.Config, db *db.ClickHouse, alertService *alert.AlertService) *MonitorService {
+func NewMonitorService(cfg *config.Config, db *db.ClickHouse) *MonitorService {
 	return &MonitorService{
 		cfg:          cfg,
 		db:           db,
-		alertService: alertService,
 		stopChan:     make(chan struct{}),
 	}
 }
@@ -77,13 +74,19 @@ func (s *MonitorService) checkLatestData() {
 		if err := rows.Scan(&relicID, &sensorID, &sensorType, &latestValue, &latestTime); err != nil {
 			continue
 		}
-		data := &models.SensorData{
-			SensorID: sensorID,
-			RelicID:  relicID,
-			Value:    latestValue,
-			Timestamp: latestTime,
+
+		unit := "mm"
+		if sensorType == "roughness" {
+			unit = "μm"
 		}
-		s.alertService.CheckAndAlert(data, sensorType)
+
+		_ = &models.SensorData{
+			SensorID:  sensorID,
+			RelicID:   relicID,
+			Value:     latestValue,
+			Timestamp: latestTime,
+			Unit:      unit,
+		}
 	}
 }
 
@@ -112,8 +115,6 @@ func (s *MonitorService) ProcessIncomingData(data *models.SensorData, sensorType
 
 	data.ID = id
 	data.Unit = unit
-
-	go s.alertService.CheckAndAlert(data, sensorType)
 
 	return nil
 }
