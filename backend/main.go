@@ -19,10 +19,13 @@ import (
 	"stone-relic-monitor/internal/ethercat_ingest"
 	"stone-relic-monitor/internal/handlers"
 	"stone-relic-monitor/internal/laser_threshold"
+	"stone-relic-monitor/internal/metrics"
 	"stone-relic-monitor/internal/models"
 	"stone-relic-monitor/internal/scaling_model"
 	"stone-relic-monitor/internal/services"
 )
+
+var Version = "2.0.0"
 
 const (
 	chanBufferSize = 1000
@@ -43,6 +46,7 @@ type App struct {
 	alertSvc           *alert_ws.AlertService
 	commonHdlr         *handlers.CommonHandler
 	monitorSvc         *services.MonitorService
+	metricsSvc         *metrics.MetricsServer
 }
 
 func NewApp() *App {
@@ -71,6 +75,7 @@ func NewApp() *App {
 	alertSvc := alert_ws.NewAlertService(cfg, chDB, sensorDataChan)
 	commonHdlr := handlers.NewCommonHandler(cfg, chDB)
 	monitorSvc := services.NewMonitorService(cfg, chDB)
+	metricsSvc := metrics.NewMetricsServer(":6060")
 
 	return &App{
 		cfg:                cfg,
@@ -85,6 +90,7 @@ func NewApp() *App {
 		alertSvc:           alertSvc,
 		commonHdlr:         commonHdlr,
 		monitorSvc:         monitorSvc,
+		metricsSvc:         metricsSvc,
 	}
 }
 
@@ -99,6 +105,8 @@ func (a *App) setupRouter() *gin.Engine {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	r.Use(metrics.PrometheusMiddleware())
 
 	r.GET("/health", a.commonHdlr.Health)
 
@@ -115,13 +123,15 @@ func (a *App) setupRouter() *gin.Engine {
 }
 
 func (a *App) Start() {
-	zap.L().Info("Starting Stone Relic Monitor v2.0",
-		zap.Strings("modules", []string{"ethercat_ingest", "scaling_model", "laser_threshold", "alert_ws"}))
+	zap.L().Info("Starting Stone Relic Monitor",
+		zap.String("version", Version),
+		zap.Strings("modules", []string{"ethercat_ingest", "scaling_model", "laser_threshold", "alert_ws", "metrics"}))
 
 	go a.scalingSvc.Run(a.stopChan)
 	go a.laserSvc.Run(a.stopChan)
 	go a.alertSvc.Run(a.stopChan)
 	go a.monitorSvc.Start()
+	a.metricsSvc.Start()
 
 	r := a.setupRouter()
 
@@ -151,6 +161,7 @@ func (a *App) Start() {
 		zap.L().Error("Server forced shutdown", zap.Error(err))
 	}
 
+	a.metricsSvc.Stop()
 	a.monitorSvc.Stop()
 	if err := a.db.Close(); err != nil {
 		zap.L().Error("DB close error", zap.Error(err))
