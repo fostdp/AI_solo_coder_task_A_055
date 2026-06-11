@@ -1,602 +1,340 @@
-# 城市供水管网漏损监测系统
+# 古代石质文物表面结垢监测与激光清洗参数优化系统
 
-实时监测城市供水管网运行状态，自动识别爆管、漏损等异常，辅助运维人员快速定位和处置。
+## 系统概述
 
-## 系统架构
+本系统针对云冈石窟、乐山大佛等10处石质文物，实现硫酸钙结垢厚度的实时监测、结垢生长动力学预测、激光清洗参数优化以及全流程的清洗效果模拟。
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          前端 (浏览器)                               │
-│                                                                     │
-│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ EventBus │  │WebSocket  │  │ DataStore│  │ AlarmManager     │   │
-│  │ 事件总线  │  │  Client   │  │ 数据存储  │  │ LeakManager      │   │
-│  └────┬─────┘  └─────┬─────┘  └────┬─────┘  └────────┬─────────┘   │
-│       │              │              │                  │             │
-│  ┌────┴──────────────┴──────────────┴──────────────────┴──────────┐  │
-│  │                    MapRenderer (Canvas 2D)                      │  │
-│  │         管网拓扑 │ 视口裁剪 │ 分级渲染 │ requestAnimationFrame    │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ WebSocket / REST API
-┌──────────────────────────────┴──────────────────────────────────────┐
-│                       后端 (Node.js + Express)                       │
-│                                                                      │
-│  ┌─────────────────── EventBus 事件总线 ─────────────────────┐      │
-│  │                                                            │      │
-│  │  SENSOR_DATA_STORED ──┬── NightFlowAnalyzer (夜间分析)     │      │
-│  │                       ├── LeakAnalysisEngine  (漏损引擎)   │      │
-│  │                       ├── AlarmDispatcher    (告警检测)     │      │
-│  │                       └── AlertNotifier      (消息推送)     │      │
-│  │                                                            │      │
-│  │  ALARM_DETECTED  ─────→ AlertNotifier ──→ WebSocket        │      │
-│  │  LEAK_SUSPECT    ─────→ AlertNotifier ──→ WebSocket        │      │
-│  │  NIGHT_ANALYSIS  ─────→ AlertNotifier ──→ WebSocket        │      │
-│  └────────────────────────────────────────────────────────────┘      │
-│                                                                      │
-│  ┌───────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
-│  │ WaterDataCollector │  │ NetworkTopology  │  │ DataSimulator    │  │
-│  │ 数据接收/存储/缓存  │  │ 拓扑配置动态加载  │  │ 可配置传感器模拟  │  │
-│  └────────┬──────────┘  └──────────────────┘  └──────────────────┘  │
-│           │                                                          │
-└───────────┼──────────────────────────────────────────────────────────┘
-            │
-┌───────────┴──────────────────────────────────────────────────────────┐
-│                  TimescaleDB (PostgreSQL 时序扩展)                     │
-│                                                                      │
-│  ┌────────────┐  ┌────────────┐  ┌────────────────────────────────┐ │
-│  │ sensor_data│  │  alarms    │  │ 连续聚合视图                    │ │
-│  │ 超表       │  │  告警表    │  │ sensor_data_hourly_avg         │ │
-│  │ 1天分块    │  │            │  │ sensor_data_daily_stats        │ │
-│  │ 7天压缩   │  │ 30天压缩   │  │ 自动刷新策略                   │ │
-│  │ 90天保留   │  │ 180天保留  │  │                                │ │
-│  └────────────┘  └────────────┘  └────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────┘
-```
+### 核心功能模块
 
-### Docker 部署架构
+| 模块 | 技术实现 | 说明 |
+|------|----------|------|
+| **数据采集层** | EtherCAT + UDP | 30台超声测厚仪 + 20台表面粗糙度仪，每2小时上报 |
+| **后端服务** | Go + Gin + ClickHouse | 高性能时序数据存储与API服务 |
+| **核心算法** | 经验模型 + 热传导方程 | 结垢生长动力学预测、激光烧蚀阈值计算 |
+| **告警系统** | 钉钉机器人 + WebSocket | 厚度>3mm 或 粗糙度>50μm时触发推送 |
+| **可视化层** | Three.js + Canvas | 3D石像模型、结垢等高线图、激光清洗粒子特效 |
+
+---
+
+## 目录结构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Docker Compose                         │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   app        │  │  postgres    │  │  pgadmin     │  │
-│  │  :3000       │──│  :5432       │  │  :5050       │  │
-│  │  Node.js     │  │  TimescaleDB │  │  (可选)       │  │
-│  │  非root用户   │  │  PG15        │  │  debug profile│  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────┘  │
-│         │                 │                              │
-│  ┌──────┴───────┐  ┌──────┴───────┐                     │
-│  │ /app/data:ro │  │ pgdata 卷     │                     │
-│  │ /app/config:ro│ │ 持久化存储     │                     │
-│  └──────────────┘  └──────────────┘                     │
-│                                                          │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │ water-monitor-net  172.28.0.0/16                    │ │
-│  └─────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 快速开始
-
-### 方式一：Docker Compose 部署（推荐）
-
-```bash
-# 1. 克隆项目
-git clone <repo-url> && cd water-leak-monitoring
-
-# 2. 复制环境变量
-cp .env.example .env
-
-# 3. 编辑 .env 修改数据库密码等配置
-# vim .env
-
-# 4. 构建并启动所有服务
-docker-compose up -d
-
-# 5. 查看日志
-docker-compose logs -f app
-
-# 6. 访问系统
-# http://localhost:3000
-```
-
-### 方式二：Docker Compose + 调试工具
-
-```bash
-# 启动应用和数据库，同时启用 pgAdmin 调试界面
-docker-compose --profile debug up -d
-
-# 访问 pgAdmin
-# http://localhost:5050
-# 邮箱: admin@water-monitor.local
-# 密码: admin
-```
-
-### 方式三：本地开发
-
-```bash
-# 1. 安装依赖
-npm install
-
-# 2. 启动（内存模式，无需数据库）
-$env:USE_DB="false"; npm start
-
-# 3. 启动（连接本地 PostgreSQL）
-npm start
-```
-
-### 方式四：仅 Docker 构建
-
-```bash
-# 构建镜像
-docker build -t water-monitor .
-
-# 运行（内存模式）
-docker run -d -p 3000:3000 -e USE_DB=false water-monitor
-
-# 运行（连接外部数据库）
-docker run -d -p 3000:3000 \
-  -e DB_HOST=your-db-host \
-  -e DB_PASSWORD=your-password \
-  water-monitor
-```
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `USE_DB` | `true` | 是否使用 PostgreSQL，`false` 则用内存模式 |
-| `DB_HOST` | `localhost` | PostgreSQL 主机地址 |
-| `DB_PORT` | `5432` | PostgreSQL 端口 |
-| `DB_NAME` | `water_monitor` | 数据库名 |
-| `DB_USER` | `postgres` | 数据库用户 |
-| `DB_PASSWORD` | `postgres` | 数据库密码 |
-| `DB_POOL_MAX` | `20` | 连接池最大连接数 |
-| `HTTP_PORT` | `3000` | HTTP 服务端口 |
-| `SIMULATE_DATA` | `true` | 是否启动传感器模拟器 |
-| `SIMULATOR_CONFIG` | `simulator-config.json` | 模拟器配置文件名 |
-| `PGADMIN_EMAIL` | `admin@water-monitor.local` | pgAdmin 登录邮箱 |
-| `PGADMIN_PASSWORD` | `admin` | pgAdmin 登录密码 |
-| `PGADMIN_PORT` | `5050` | pgAdmin 端口 |
-
-## 项目结构
-
-```
-water-leak-monitoring/
-├── config/
-│   ├── system.js                 # 系统阈值配置
-│   ├── database.js               # 数据库连接配置
-│   └── simulator-config.json     # 传感器模拟器配置
-├── data/
-│   ├── nodes-demo.json           # 管网节点定义（demo规模）
-│   ├── pipes-demo.json           # 管线定义（demo规模）
-│   ├── network-topology.json     # 综合拓扑配置
-│   └── generate-topology.js      # 拓扑生成脚本
-├── database/
-│   ├── init.sql                  # 数据库表结构
-│   └── init-timescale.sql        # TimescaleDB 时序扩展
-├── server/
-│   ├── index.js                  # 服务入口 & API 路由
-│   ├── database.js               # 数据库抽象层（PG/内存双模式）
-│   ├── data-simulator.js         # 可配置传感器模拟器
-│   ├── core/
-│   │   └── EventBus.js           # 事件总线
-│   ├── collectors/
-│   │   └── WaterDataCollector.js  # 数据接收与分发
-│   ├── analyzers/
-│   │   ├── NightFlowAnalyzer.js   # 夜间流量分析
-│   │   └── LeakAnalysisEngine.js  # 漏损概率分析
-│   ├── alarms/
-│   │   └── AlarmDispatcher.js     # 告警检测引擎
-│   ├── notifiers/
-│   │   └── AlertNotifier.js       # 告警推送通知
-│   └── config/
-│       └── NetworkTopology.js     # 管网拓扑配置管理
-├── public/
-│   ├── index.html
-│   ├── css/style.css
+AI_solo_coder_task_A_055/
+├── backend/                 # Go 后端服务
+│   ├── main.go              # 入口文件
+│   ├── config.yaml          # 系统配置
+│   ├── go.mod
+│   └── internal/
+│       ├── config/          # 配置加载 (Viper)
+│       ├── db/              # ClickHouse 连接池
+│       ├── models/          # 数据模型定义
+│       ├── router/          # Gin 路由注册
+│       ├── handlers/        # HTTP 处理器
+│       ├── services/        # 业务逻辑服务
+│       ├── alert/           # 告警服务 + WebSocket Hub
+│       └── algorithms/      # 核心算法实现
+│
+├── clickhouse/              # 数据库初始化
+│   └── init.sql             # 表结构 + 视图 + 种子数据
+│
+├── simulator/               # EtherCAT 数据模拟器
+│   ├── ethercat_sim.go      # 模拟器主程序
+│   └── go.mod
+│
+├── frontend/                # Web 前端
+│   ├── index.html           # 主页面
+│   ├── css/
+│   │   └── style.css        # 全局样式（深色仪表盘风格）
 │   └── js/
-│       ├── core/EventBus.js       # 前端事件总线
-│       ├── services/WebSocketClient.js
-│       ├── stores/DataStore.js
-│       ├── managers/AlarmManager.js
-│       ├── managers/LeakManager.js
-│       ├── network.js             # Canvas 管网渲染器
-│       └── app.js                 # 前端入口
-├── Dockerfile                     # 多阶段构建，非root用户
-├── docker-compose.yml             # TimescaleDB + App + pgAdmin
-├── .env.example                   # 环境变量模板
-├── .dockerignore
-└── package.json
+│       ├── api.js           # REST API 封装
+│       ├── ws.js            # WebSocket 客户端
+│       ├── stats.js         # 数据统计渲染
+│       ├── three-viewer.js  # Three.js 3D模型查看器
+│       ├── contour.js       # Canvas 等高线渲染
+│       ├── cleaning.js      # 激光清洗模拟 + 粒子特效
+│       ├── trends.js        # 趋势图表
+│       ├── algorithms.js    # 算法预测UI
+│       └── app.js           # 主应用入口
+│
+└── README.md
 ```
 
-## 管网配置格式
+---
 
-### 节点配置 (data/nodes-*.json)
+## 快速启动
+
+### 环境要求
+
+- **Go** >= 1.21
+- **ClickHouse** >= 22.0
+- **现代浏览器**（支持WebGL 2.0：Chrome 80+ / Firefox 75+ / Edge 80+）
+
+---
+
+### 步骤1：启动 ClickHouse 并初始化
+
+```bash
+# Docker 方式启动 ClickHouse（推荐）
+docker run -d --name stone-clickhouse \
+  -p 8123:8123 -p 9000:9000 \
+  -e CLICKHOUSE_DB=stone_relic \
+  clickhouse/clickhouse-server:latest
+
+# 执行初始化脚本
+clickhouse-client --host 127.0.0.1 --port 9000 < clickhouse/init.sql
+```
+
+初始化脚本将创建：
+- **stone_relic** 数据库
+- 7张核心业务表（stone_relic, sensor, sensor_data, alert_record, cleaning_record, cleaning_parameter_opt_log）
+- 2个物化视图（v_latest_sensor_data, v_daily_statistics）
+- 自动注入10处文物 + 50个传感器的基础配置
+
+---
+
+### 步骤2：启动 Go 后端
+
+```bash
+cd backend
+
+# 安装依赖
+go mod download
+
+# 配置文件已包含默认值，如需修改钉钉Webhook请编辑 config.yaml
+# 启动服务
+go run main.go
+```
+
+服务将在 `http://127.0.0.1:8080` 启动，健康检查：
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+---
+
+### 步骤3：启动 EtherCAT 数据模拟器
+
+```bash
+cd simulator
+go mod download
+
+# 启动模拟器（会自动回填1个月历史数据 + 实时模拟每10秒上报）
+go run ethercat_sim.go
+```
+
+模拟器特性：
+- 启动后回填 **过去1个月**（30天×12次/天=360批）的历史数据
+- 按每10秒间隔持续模拟50台传感器上报
+- 包含日周期、季周期、随机扰动、偶发异常值
+- 按文物所在地差异化生成 SO₂/湿度/温度 数据
+
+---
+
+### 步骤4：打开前端
+
+```bash
+# 方式一：直接用浏览器打开
+start frontend/index.html
+
+# 方式二：使用简单静态服务器（推荐，避免CORS问题）
+cd frontend && python -m http.server 8000
+# 然后访问 http://127.0.0.1:8000
+```
+
+---
+
+## 核心 API 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/relics` | 获取文物列表 |
+| GET | `/api/v1/relics/:id` | 获取文物详情 + 传感器 + 最新数据 |
+| GET | `/api/v1/relics/:id/daily-stats?days=7` | 日粒度统计 |
+| GET | `/api/v1/sensors/relic/:relic_id/latest` | 文物最新传感器数据 |
+| GET | `/api/v1/sensors/:sensor_id/history?hours=24` | 单传感器历史 |
+| **POST** | `/api/v1/sensors/upload` | **批量上传传感器数据** |
+| GET | `/api/v1/alerts` | 告警列表 |
+| GET | `/api/v1/alerts/stats` | 告警统计汇总 |
+| **POST** | `/api/v1/algorithms/predict-scale-growth` | **结垢生长预测** |
+| **POST** | `/api/v1/algorithms/predict-laser-cleaning` | **激光清洗参数优化** |
+| GET | `/ws` | WebSocket 实时推送 |
+
+### 上传传感器数据（EtherCAT 上报）
 
 ```json
-[
-  {
-    "node_id": "N0001",
-    "name": "水厂1",
-    "x": 100,
-    "y": 500,
-    "type": "plant",
-    "pressure_sensor": true,
-    "flow_sensor": true
-  }
-]
-```
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `node_id` | string | 是 | 节点唯一标识 |
-| `name` | string | 否 | 节点名称 |
-| `x` | number | 是 | Canvas 坐标 X |
-| `y` | number | 是 | Canvas 坐标 Y |
-| `type` | string | 是 | 节点类型：`plant`/`pump`/`pressure_station`/`junction`/`valve`/`hydrant` |
-| `pressure_sensor` | boolean | 否 | 是否安装压力传感器 |
-| `flow_sensor` | boolean | 否 | 是否安装流量计 |
-
-### 管线配置 (data/pipes-*.json)
-
-```json
-[
-  {
-    "pipe_id": "P0001",
-    "start_node_id": "N0001",
-    "end_node_id": "N0003",
-    "diameter": 800,
-    "length": 2500,
-    "material": "ductile_iron"
-  }
-]
-```
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `pipe_id` | string | 是 | 管线唯一标识 |
-| `start_node_id` | string | 是 | 起始节点 ID |
-| `end_node_id` | string | 是 | 终止节点 ID |
-| `diameter` | number | 是 | 管径 (mm)，≥600 主干管 / ≥300 次干管 / <300 支管 |
-| `length` | number | 是 | 管长 (m) |
-| `material` | string | 否 | 材质：`ductile_iron`/`steel`/`pe`/`pvc` |
-
-### 配置加载优先级
-
-```
-NetworkTopology.loadFromConfig('demo')
-  → 读取 data/nodes-demo.json + data/pipes-demo.json
-
-NetworkTopology.loadFromConfig('full')
-  → 读取 data/network-topology.json
-
-NetworkTopology.loadFromDatabase()
-  → 查询 SELECT * FROM nodes / pipes
-```
-
-## 传感器模拟器配置
-
-模拟器配置文件位于 `config/simulator-config.json`，支持以下层级覆盖：
-
-```
-globalDefaults → typeDefaults → nodeOverrides
-```
-
-### 配置示例
-
-```json
+POST /api/v1/sensors/upload
 {
-  "reportIntervalMs": 3000,
-  "anomalyInjectionInterval": 10,
-  "anomalyInjectionChance": 0.3,
-  "globalDefaults": {
-    "basePressure": 0.35,
-    "pressureNoise": 0.01,
-    "pressureDrift": 0.002,
-    "baseFlow": 15,
-    "flowNoise": 1.0,
-    "flowDrift": 0.5
-  },
-  "typeDefaults": {
-    "plant": { "basePressure": 0.40, "baseFlow": 120 },
-    "pump":  { "basePressure": 0.38, "baseFlow": 65 }
-  },
-  "nodeOverrides": {
-    "N0001": { "basePressure": 0.42, "baseFlow": 130 }
-  },
-  "anomalyProfiles": {
-    "burst": {
-      "pressureDropRate": { "min": 0.03, "max": 0.05 },
-      "flowIncreaseRate": { "min": 5, "max": 10 },
-      "duration": { "min": 6, "max": 12 }
-    },
-    "leak": {
-      "flowOffsetRatio": { "min": 0.2, "max": 0.5 },
-      "duration": { "min": 20, "max": 40 }
+  "data": [
+    {
+      "sensor_id": 1,
+      "relic_id": 1,
+      "timestamp": "2025-06-12T10:00:00Z",
+      "value": 1.85,
+      "unit": "mm",
+      "so2_concentration": 22.5,
+      "humidity": 58.0,
+      "temperature": 14.2
     }
-  },
-  "dailyPattern": {
-    "enabled": true,
-    "curve": [
-      { "hour": 0,  "factor": 0.40 },
-      { "hour": 4,  "factor": 0.25 },
-      { "hour": 8,  "factor": 1.00 },
-      { "hour": 12, "factor": 0.75 },
-      { "hour": 18, "factor": 1.00 },
-      { "hour": 22, "factor": 0.55 },
-      { "hour": 24, "factor": 0.40 }
-    ],
-    "weekendFactor": 0.75,
-    "pressureFollowsFlow": true,
-    "pressureFactorScale": 0.3
-  }
+  ]
 }
 ```
 
-### 参数说明
+---
 
-| 参数 | 说明 |
-|------|------|
-| `reportIntervalMs` | 传感器上报间隔（毫秒） |
-| `anomalyInjectionInterval` | 每隔多少次上报注入一次异常 |
-| `anomalyInjectionChance` | 注入爆管的概率（0-1，其余为漏损） |
-| `basePressure` | 基准压力 (MPa) |
-| `pressureNoise` | 压力随机波动幅度 |
-| `pressureDrift` | 压力缓慢漂移幅度 |
-| `baseFlow` | 基准流量 (L/s) |
-| `flowNoise` | 流量随机波动幅度 |
-| `flowDrift` | 流量缓慢漂移幅度 |
-| `dailyPattern.enabled` | 是否启用日间流量曲线 |
-| `dailyPattern.curve` | 24小时流量系数曲线，线性插值 |
-| `dailyPattern.weekendFactor` | 周末流量衰减系数 |
-| `dailyPattern.pressureFollowsFlow` | 压力是否跟随流量波动 |
-| `dailyPattern.pressureFactorScale` | 压力跟随流量的缩放比例 |
+## 核心算法详解
 
-### 日间流量曲线
+### 1. 结垢生长动力学模型
 
-模拟器支持按24小时曲线模拟用水高峰和低谷：
+基于 **SO₂ 浓度 + 湿度 + 温度** 的经验动力学模型：
 
-- **凌晨 2:00-4:00** — factor 0.25-0.30，夜间最小流量时段
-- **早高峰 7:00-9:00** — factor 0.90-1.00，用水高峰
-- **午间 12:00** — factor 0.75，回落
-- **晚高峰 18:00-19:00** — factor 0.95-1.00，第二高峰
-- **深夜 22:00+** — factor 0.55 以下，逐步下降
+```
+生长速率 = 基准速率 × f(SO₂) × f(Humidity) × f(Temperature)
 
-周末整体流量乘以 `weekendFactor`（默认 0.75）。
+其中：
+  f(SO₂)      = (SO₂ × 10⁻³) ^ 0.7          (反应级数经验值)
+  f(Humidity) = RH < 60%  ? 0.3 + 0.7(RH/60)³
+                           : 1 + 2.5((RH-60)/40)²  (临界湿度效应)
+  f(Temp)     = exp( Ea/R × (1/T₀ - 1/T) )    (Arrhenius方程, Ea=4000 J/mol)
 
-## 模拟器控制 API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `POST /api/simulator/inject` | POST | 向指定节点注入异常 |
-| `POST /api/simulator/batch-inject` | POST | 批量注入异常 |
-| `POST /api/simulator/set-node` | POST | 设置节点压力/流量基准值 |
-| `POST /api/simulator/scenario` | POST | 加载测试场景 |
-| `GET /api/simulator/nodes` | GET | 获取所有节点模拟状态 |
-
-### 注入异常
-
-```bash
-curl -X POST http://localhost:3000/api/simulator/inject \
-  -H "Content-Type: application/json" \
-  -d '{"nodeId": "N0010", "type": "burst"}'
+叠加：日周期波动 (±10%)、生长饱和修正 (S型曲线趋近最大10mm)
 ```
 
-### 批量注入
+代码位置：[scale_growth.go](file:///d:/SOLO-2/AI_solo_coder_task_A_055/backend/internal/algorithms/scale_growth.go)
 
-```bash
-curl -X POST http://localhost:3000/api/simulator/batch-inject \
-  -H "Content-Type: application/json" \
-  -d '{"nodes": ["N0010", "N0011", "N0012"], "type": "leak"}'
+---
+
+### 2. 激光清洗阈值预测（热传导烧蚀模型）
+
+基于**一维热传导方程**的解析解，搜索最优参数组合：
+
+**烧蚀判据**：
+```
+能量密度 F > 烧蚀阈值 F_th (CaSO₄·2H₂O: ~1.2 J/cm²)
 ```
 
-### 设置节点基准值
+**烧蚀深度估算**：
+```
+δ = (F × η - F_th) × M / (ρ × L_v) × 10⁶
 
-```bash
-curl -X POST http://localhost:3000/api/simulator/set-node \
-  -H "Content-Type: application/json" \
-  -d '{"nodeId": "N0010", "pressure": 0.15, "flow": 50}'
+其中：
+  F  = 实际能量密度 = 脉冲能量/光斑面积 × 重叠系数
+  η  = 材料耦合效率 (硫酸钙 0.72, 方解石 0.85)
+  M  = 摩尔质量 (136.14 g/mol)
+  ρ  = 密度 (2.32 g/cm³)
+  L_v = 汽化焓 (1.8 × 10⁶ J/kg)
 ```
 
-### 加载测试场景
+**三维参数搜索空间**：
+- 激光功率 P ∈ [50, 300] W
+- 脉冲宽度 τ ∈ [200, 2000] ns  
+- 扫描速度 v ∈ [10, 200] mm/s
 
-```bash
-curl -X POST http://localhost:3000/api/simulator/scenario \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "区域爆管演练",
-    "steps": [
-      {"action": "inject_burst", "nodeId": "N0010", "delay": 0},
-      {"action": "inject_leak",  "nodeId": "N0011", "delay": 5},
-      {"action": "set_pressure", "nodeId": "N0012", "value": 0.10, "delay": 10}
-    ]
-  }'
-```
+**约束条件**：
+- 光斑重叠率 ∈ [10%, 90%]
+- 热穿透深度 ~ √(4ατ) ∈ [0.8d, 3d] (避免过度热影响)
+- 阈值比 F/F_th ∈ [1.05, 3.0] (安全工作区间)
 
-## 数据库设计
+代码位置：[laser_cleaning.go](file:///d:/SOLO-2/AI_solo_coder_task_A_055/backend/internal/algorithms/laser_cleaning.go)
 
-### TimescaleDB 时序扩展
-
-| 表 | 类型 | 分块间隔 | 压缩策略 | 保留策略 |
-|----|------|----------|----------|----------|
-| `sensor_data` | 超表 | 1天 | 7天后压缩，按 node_id 分段 | 90天 |
-| `alarms` | 普通表 + 压缩 | — | 30天后压缩，按 alarm_type 分段 | 180天 |
-
-### 连续聚合视图
-
-| 视图 | 时间桶 | 刷新策略 | 字段 |
-|------|--------|----------|------|
-| `sensor_data_hourly_avg` | 1小时 | 每小时刷新，偏移3h-1h | avg/min/max pressure, flow_rate, sample_count |
-| `sensor_data_daily_stats` | 1天 | 每天刷新，偏移3d-1d | avg/min/max/stddev pressure, flow_rate, sample_count |
+---
 
 ## 告警规则
 
-| 告警类型 | 触发条件 | 严重级别 |
-|----------|----------|----------|
-| 爆管预警 | 压力骤降 ≥ 0.2 MPa，5分钟观察期后未恢复至70% | critical |
-| 漏损预警 | 夜间流量 > 工作日/周末基准值 × 1.5 | warning |
-| 离线告警 | 传感器离线超过 15 分钟 | warning |
+| 指标 | 警告阈值 | 严重阈值 | 触发方式 |
+|------|---------|---------|---------|
+| **结垢厚度** | > 3.0 mm | > 4.5 mm | 钉钉 + WebSocket + 入库 |
+| **表面粗糙度 Ra** | > 50.0 μm | > 75.0 μm | 钉钉 + WebSocket + 入库 |
 
-## API 接口
+**告警抑制**：同一传感器 1 小时内不重复告警。
+**严重告警**：钉钉机器人自动 @所有人。
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/network-data` | GET | 获取管网拓扑（节点+管线） |
-| `/api/nodes` | GET | 获取所有节点 |
-| `/api/pipes` | GET | 获取所有管线 |
-| `/api/sensor-data/:nodeId` | GET | 获取节点历史数据（`?hours=24`） |
-| `/api/alarms` | GET | 获取告警列表（`?limit=50`） |
-| `/api/leak-suspects` | GET | 获取漏损嫌疑区域 |
-| `/api/stats` | GET | 获取各模块运行状态 |
-| `/api/simulator/inject` | POST | 注入单节点异常 |
-| `/api/simulator/batch-inject` | POST | 批量注入异常 |
-| `/api/simulator/set-node` | POST | 设置节点基准值 |
-| `/api/simulator/scenario` | POST | 加载测试场景 |
-| `/api/simulator/nodes` | GET | 获取模拟器节点状态 |
+### 配置钉钉机器人
 
-## 技术栈
-
-- **后端**: Node.js + Express + WebSocket (ws)
-- **数据库**: PostgreSQL 15 + TimescaleDB（时序超表、连续聚合、自动压缩保留策略）
-- **前端**: 原生 Canvas 2D + 事件驱动架构
-- **容器化**: Docker 多阶段构建 + Docker Compose
-- **数据库管理**: pgAdmin 4（可选，debug profile）
-
-## 部署注意事项
-
-### 生产环境建议
-
-1. **数据库持久化**
-   - 默认使用 Docker volume 存储数据，生产环境建议挂载到本地目录或使用云存储
-   - 定期备份数据库：`docker exec water-monitor-db pg_dump -U postgres water_monitor > backup.sql`
-
-2. **性能调优**
-   - 传感器节点较多时，适当增加 `DB_POOL_MAX`
-   - 数据量较大时，考虑缩短 TimescaleDB 保留策略
-   - 调整 `reportIntervalMs` 平衡实时性和存储压力
-
-3. **安全配置**
-   - 修改默认数据库密码 `DB_PASSWORD`
-   - 修改 pgAdmin 默认密码 `PGADMIN_PASSWORD`
-   - 生产环境建议使用反向代理（Nginx）并配置 HTTPS
-   - 限制 WebSocket 连接来源
-
-4. **资源限制**
-   - 根据实际节点数量调整容器内存限制
-   - 建议最低配置：2C CPU / 4G 内存 / 50G 磁盘
-
-### 常见问题
-
-#### Q: 容器启动后数据库连接失败？
-A: 检查 `DB_HOST` 是否为 `postgres`（Docker 内部服务名），确认数据库容器已完全启动并通过健康检查。
-
-#### Q: 数据没有写入数据库？
-A: 检查 `USE_DB` 是否为 `true`，查看日志中是否有数据库连接错误。可通过 `/api/stats` 查看 collector 运行状态。
-
-#### Q: 端口被占用？
-A: 修改 `.env` 中的 `HTTP_PORT`、`DB_PORT`、`PGADMIN_PORT`。
-
-#### Q: 如何清空所有数据重新开始？
-A:
-```bash
-docker-compose down -v
-docker-compose up -d
-```
-**警告**: 这会删除所有持久化数据！
-
-#### Q: 如何停止数据模拟器？
-A: 设置环境变量 `SIMULATE_DATA=false`，或调用 API：
-```bash
-curl -X POST http://localhost:3000/api/simulator/stop
+修改 `backend/config.yaml`：
+```yaml
+alert:
+  dingtalk_webhook: "https://oapi.dingtalk.com/robot/send?access_token=你的TOKEN"
+  dingtalk_secret: "你的加签SECRET"   # 可选，启用安全设置时填写
 ```
 
-#### Q: 如何自定义管网拓扑？
-A: 修改 `data/nodes-demo.json` 和 `data/pipes-demo.json`，然后重启服务。生产环境建议将拓扑数据存入数据库，使用 `NetworkTopology.loadFromDatabase()` 加载。
+---
 
-### Docker Compose 常用命令
+## 前端功能说明
 
-```bash
-# 启动所有服务
-docker-compose up -d
+### 1. 3D 模型视图（Three.js）
+- **程序化生成** 佛像石像（基座→莲座→袈裟→躯干→头部→发髻→光背）
+- 结垢厚度 **热力图覆盖**（传感器位置径向插值）
+- 传感器实时标记（发光球体 + 脉冲动画）
+- 支持线框模式 / OrbitControls 轨道控制
 
-# 启动服务并重建镜像
-docker-compose up -d --build
+### 2. 结垢等高线图（Canvas）
+- **Marching Squares 算法** 生成精确等高线
+- 三种模式：仅等高线 / 填充+等高线 / 热力图
+- 5~20 层级可调，实时标签显示数值
+- 可导出 PNG 图片
 
-# 查看日志
-docker-compose logs -f app
-docker-compose logs -f postgres
+### 3. 激光清洗模拟（Canvas + 粒子系统）
+- 调用后端 API 计算最优参数（功率/脉宽/速度）
+- **蛇形路径扫描**，实时显示光斑（激光光晕+核心+外围圈）
+- **粒子特效**：烧蚀碎屑（橙黄火花 + 灰色粉尘）
+- 进度条 + 预计剩余时间
 
-# 停止服务
-docker-compose stop
+### 4. 趋势分析
+- 结垢厚度 + 粗糙度 双Y轴对比图
+- SO₂浓度 / 相对湿度 / 环境温度 多参数关联分析
+- 自动检测后端离线，使用内置算法生成模拟数据
 
-# 停止并删除容器
-docker-compose down
+### 5. 算法预测
+- 基于输入的 SO₂/湿度/温度 进行生长预测
+- 可视化 **告警触发时间点**（垂直线标注）
+- 红色区域：超标危险区
+- 增长速率/总量统计面板
 
-# 停止并删除容器和数据卷（清空数据）
-docker-compose down -v
+---
 
-# 查看服务状态
-docker-compose ps
+## 关键数据量与性能估算
 
-# 进入应用容器
-docker exec -it water-monitor-app sh
+| 项目 | 数值 |
+|------|------|
+| 监测文物 | 10 处 |
+| 超声测厚传感器 | 30 台 |
+| 表面粗糙度仪 | 20 台 |
+| 上报频率 | 每 2 小时 / 次 |
+| 每年数据量 | 50 × 12 × 365 = 219,000 条 |
+| ClickHouse 存储 | ~50MB/年（含TTL自动保留1年）|
 
-# 进入数据库
-docker exec -it water-monitor-db psql -U postgres -d water_monitor
+---
 
-# 导出数据库备份
-docker exec water-monitor-db pg_dump -U postgres water_monitor > backup_$(date +%Y%m%d).sql
+## 常见问题
 
-# 恢复数据库备份
-docker exec -i water-monitor-db psql -U postgres -d water_monitor < backup.sql
-```
+### Q1：前端无法连接后端？
+- 检查后端 `http://127.0.0.1:8080/health` 是否返回 `{"status":"ok"}`
+- 推荐使用 `python -m http.server` 启动前端，避免 file:// 协议 CORS 问题
 
-### 监控与维护
+### Q2：ClickHouse 连接失败？
+- 确认容器端口 9000 已映射
+- 修改 `backend/config.yaml` 中的 `clickhouse.host` 为实际地址
+- 默认使用 TCP 原生协议（端口 9000），不是 HTTP 协议（8123）
 
-1. **健康检查**
-   - 应用健康检查：`GET /api/stats`
-   - 容器健康状态：`docker-compose ps`
+### Q3：模拟器与后端启动顺序？
+- 建议：ClickHouse → 后端 → 模拟器（模拟器启动会等待3秒自动回填历史数据）
 
-2. **日志监控**
-   ```bash
-   # 实时查看所有日志
-   docker-compose logs -f
+### Q4：没有配置钉钉机器人？
+- 不影响系统运行，钉钉推送会自动跳过
+- WebSocket 实时告警仍可在前端看到
 
-   # 只看错误日志
-   docker-compose logs app | grep -i error
-   ```
+---
 
-3. **数据库维护**
-   ```sql
-   -- 查看超表分块情况
-   SELECT hypertable_name, chunk_name, range_start, range_end
-   FROM timescaledb_information.chunks
-   ORDER BY range_start DESC;
+## 技术栈总结
 
-   -- 查看压缩策略
-   SELECT * FROM timescaledb_information.jobs
-   WHERE proc_name = 'policy_compression';
-
-   -- 手动触发压缩
-   SELECT compress_chunk(i, if_not_compressed => true)
-   FROM show_chunks('sensor_data', older_than => interval '7 days') i;
-
-   -- 查看连续聚合刷新状态
-   SELECT * FROM timescaledb_information.job_stats
-   WHERE hypertable_name = 'sensor_data_hourly_avg';
-   ```
-
-## 版本历史
-
-### v2.0.0 - 模块化重构版本
-- 事件驱动架构，解耦数据接收、分析、告警、推送模块
-- 新增 WaterDataCollector、LeakAnalysisEngine、NightFlowAnalyzer、AlarmDispatcher、AlertNotifier、NetworkTopology
-- 管网拓扑支持从配置文件和数据库动态加载
-- 支持 PostgreSQL + TimescaleDB 时序数据库
-- Docker 容器化部署，支持生产环境运行
-
-### v1.0.0 - 初始版本
-- 基础功能：数据采集、Canvas 渲染、告警检测
+| 层级 | 技术选型 | 版本 |
+|------|---------|------|
+| 数据库 | ClickHouse | 22+ |
+| 后端语言 | Go | 1.21 |
+| Web框架 | Gin | 1.9.1 |
+| 数据库驱动 | clickhouse-go | 2.18.0 |
+| 实时通信 | gorilla/websocket | 1.5.1 |
+| 3D渲染 | Three.js | 0.160.0 (CDN) |
+| 绘图 | HTML5 Canvas 2D | - |
+| 配置 | Viper | 1.18.2 |
+| 日志 | zap | 1.26.0 |
