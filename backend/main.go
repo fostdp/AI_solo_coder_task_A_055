@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"stone-relic-monitor/internal/alert"
+	"stone-relic-monitor/internal/algorithms"
 	"stone-relic-monitor/internal/config"
 	"stone-relic-monitor/internal/db"
 	"stone-relic-monitor/internal/handlers"
@@ -17,6 +18,8 @@ func main() {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
+
+	algorithms.SetLaserConfig(cfg.Laser)
 
 	clickhouseDB := db.NewClickHouse(cfg)
 	if err := clickhouseDB.Connect(); err != nil {
