@@ -48,28 +48,33 @@ type LatestSensorData struct {
 }
 
 type AlertRecord struct {
-	ID        uint64    `json:"id"`
-	RelicID   uint64    `json:"relic_id"`
-	SensorID  uint64    `json:"sensor_id"`
-	Type      string    `json:"type"`
-	Level     string    `json:"level"`
-	Value     float32   `json:"value"`
-	Threshold float32   `json:"threshold"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              uint64     `json:"id"`
+	RelicID         uint64     `json:"relic_id"`
+	SensorID        uint64     `json:"sensor_id"`
+	Timestamp       time.Time  `json:"timestamp"`
+	AlertType       string     `json:"alert_type"`
+	Severity        string     `json:"severity"`
+	Message         string     `json:"message"`
+	Value           float32    `json:"value"`
+	Threshold       float32    `json:"threshold"`
+	Resolved        bool       `json:"resolved"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNotes string     `json:"resolution_notes,omitempty"`
 }
 
 type CleaningRecord struct {
 	ID             uint64    `json:"id"`
 	RelicID        uint64    `json:"relic_id"`
 	AreaID         uint32    `json:"area_id"`
+	Timestamp      time.Time `json:"timestamp"`
 	LaserPower     float32   `json:"laser_power"`
 	PulseDuration  float32   `json:"pulse_duration"`
 	ScanSpeed      float32   `json:"scan_speed"`
-	PredictedDepth float32   `json:"predicted_depth"`
+	TargetDepth    float32   `json:"target_depth"`
 	ActualDepth    float32   `json:"actual_depth"`
-	Operator       string    `json:"operator"`
-	CreatedAt      time.Time `json:"created_at"`
+	EnergyDensity  float32   `json:"energy_density"`
+	Effectiveness  float32   `json:"effectiveness"`
+	OperatorNotes  string    `json:"operator_notes,omitempty"`
 }
 
 type CleaningParameterOpt struct {
@@ -87,23 +92,43 @@ type CleaningParameterOpt struct {
 	CreatedAt               time.Time `json:"created_at"`
 }
 
+type CleaningParameterOptLog struct {
+	ID               uint64    `json:"id"`
+	RelicID          uint64    `json:"relic_id"`
+	Timestamp        time.Time `json:"timestamp"`
+	RequestedPower   float32   `json:"requested_power"`
+	RequestedPulse   float32   `json:"requested_pulse"`
+	RequestedSpeed   float32   `json:"requested_speed"`
+	OptimalPower     float32   `json:"optimal_power"`
+	OptimalPulse     float32   `json:"optimal_pulse"`
+	OptimalSpeed     float32   `json:"optimal_speed"`
+	TargetDepth      float32   `json:"target_depth"`
+	PredictedDepth   float32   `json:"predicted_depth"`
+	OptimizationGain float32   `json:"optimization_gain"`
+}
+
 type ScaleGrowthPrediction struct {
-	Hours             int       `json:"hours"`
-	InitialThickness  float32   `json:"initial_thickness"`
-	SO2Concentration  float32   `json:"so2_concentration"`
-	Humidity          float32   `json:"humidity"`
-	Temperature       float32   `json:"temperature"`
-	PredictedThickness []float32 `json:"predicted_thickness"`
+	Hours               int       `json:"hours"`
+	InitialThickness    float32   `json:"initial_thickness"`
+	SO2Concentration    float32   `json:"so2_concentration"`
+	Humidity            float32   `json:"humidity"`
+	Temperature         float32   `json:"temperature"`
+	PredictedThickness  []float32 `json:"predicted_thickness"`
+	FinalThickness      float32   `json:"final_thickness"`
+	GrowthRate          float32   `json:"growth_rate"`
+	SaturationFactor    float32   `json:"saturation_factor"`
 }
 
 type LaserCleaningRequest struct {
-	TargetThickness float32 `json:"target_thickness"`
-	MaterialType    string  `json:"material_type"`
-	RelicID         uint64  `json:"relic_id"`
-	AreaID          uint32  `json:"area_id"`
+	TargetThickness  float32 `json:"target_thickness"`
+	MaterialType     string  `json:"material_type"`
+	RelicID          uint64  `json:"relic_id"`
+	AreaID           uint32  `json:"area_id"`
+	SurfaceRoughness float32 `json:"surface_roughness"`
 }
 
 type LaserCleaningResult struct {
+	RelicID                uint64  `json:"relic_id"`
 	OptimalPower           float32 `json:"optimal_power"`
 	OptimalPulse           float32 `json:"optimal_pulse"`
 	OptimalSpeed           float32 `json:"optimal_speed"`
