@@ -33,9 +33,9 @@ type ClickHouseConfig struct {
 }
 
 type AlertConfig struct {
-	DingtalkWebhook string
-	DingtalkSecret  string
-	EnableWS        bool
+	WebhookURL string `mapstructure:"dingtalk_webhook"`
+	Secret     string `mapstructure:"dingtalk_secret"`
+	EnableWS   bool   `mapstructure:"enable_ws"`
 }
 
 type ThresholdConfig struct {
