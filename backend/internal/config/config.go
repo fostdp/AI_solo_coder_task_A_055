@@ -11,6 +11,7 @@ type Config struct {
 	ClickHouse ClickHouseConfig
 	Alert      AlertConfig
 	Threshold  ThresholdConfig
+	Laser      LaserConfig
 	Simulator  SimulatorConfig
 	Relics     []RelicInfo
 }
@@ -45,6 +46,19 @@ type ThresholdConfig struct {
 type SimulatorConfig struct {
 	EtherCATPort    int
 	IntervalSeconds int
+}
+
+type LaserConfig struct {
+	DefaultPower     float64
+	MinPower         float64
+	MaxPower         float64
+	MinPulseDuration float64
+	MaxPulseDuration float64
+	MinScanSpeed     float64
+	MaxScanSpeed     float64
+	PowerStep        float64
+	PulseStep        float64
+	SpeedStep        float64
 }
 
 type RelicInfo struct {
@@ -95,6 +109,18 @@ func Load() *Config {
 	}
 	if cfg.Threshold.RoughnessUM == 0 {
 		cfg.Threshold.RoughnessUM = 50.0
+	}
+	if cfg.Laser.DefaultPower == 0 {
+		cfg.Laser.DefaultPower = 200.0
+		cfg.Laser.MinPower = 50.0
+		cfg.Laser.MaxPower = 300.0
+		cfg.Laser.MinPulseDuration = 200.0
+		cfg.Laser.MaxPulseDuration = 2000.0
+		cfg.Laser.MinScanSpeed = 10.0
+		cfg.Laser.MaxScanSpeed = 200.0
+		cfg.Laser.PowerStep = 10.0
+		cfg.Laser.PulseStep = 100.0
+		cfg.Laser.SpeedStep = 5.0
 	}
 
 	zap.L().Info("Config loaded successfully")
