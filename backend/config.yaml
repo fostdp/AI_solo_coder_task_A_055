@@ -21,6 +21,18 @@ threshold:
   scale_thickness_mm: 3.0
   roughness_um: 50.0
 
+laser:
+  default_power: 200.0
+  min_power: 50.0
+  max_power: 300.0
+  min_pulse_duration: 200.0
+  max_pulse_duration: 2000.0
+  min_scan_speed: 10.0
+  max_scan_speed: 200.0
+  power_step: 10.0
+  pulse_step: 100.0
+  speed_step: 5.0
+
 simulator:
   ethercat_port: 8081
   interval_seconds: 7200
