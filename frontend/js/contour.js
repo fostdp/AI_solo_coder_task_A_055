@@ -4,6 +4,13 @@ const Contour = {
     gridSize: 80,
     dataGrid: [],
     relicData: null,
+    _dirty: true,
+    _cachedFilled: null,
+    _cachedFilledMax: 0,
+    _cachedLines: null,
+    _cachedLinesLevels: 0,
+    _cachedLinesMax: 0,
+    _cachedCanvasSize: '',
 
     init() {
         this.canvas = document.getElementById('contour-canvas');
@@ -38,7 +45,7 @@ const Contour = {
             x: 0.15 + (i * 0.25) % 0.7,
             y: 0.2 + Math.floor(i * 0.25 / 0.7) * 0.3,
             value: d.latest_value,
-            radius: 0.25 + Math.random() * 0.15
+            radius: 0.25 + (0.15 * ((d.sensor_id * 7 + 3) % 10) / 10)
         }));
 
         for (let y = 0; y < h; y++) {
@@ -67,6 +74,10 @@ const Contour = {
             }
             this.dataGrid.push(row);
         }
+
+        this._dirty = true;
+        this._cachedFilled = null;
+        this._cachedLines = null;
     },
 
     getValue(x, y) {
@@ -113,6 +124,13 @@ const Contour = {
     renderFilled(max, cellW, cellH) {
         const w = this.canvas.width;
         const h = this.canvas.height;
+        const sizeKey = `${w}x${h}`;
+
+        if (!this._dirty && this._cachedFilled && this._cachedFilledMax === max && this._cachedCanvasSize === sizeKey) {
+            this.ctx.putImageData(this._cachedFilled, 0, 0);
+            return;
+        }
+
         const imgData = this.ctx.createImageData(w, h);
 
         for (let py = 0; py < h; py++) {
@@ -156,6 +174,10 @@ const Contour = {
                 imgData.data[idx + 3] = 220;
             }
         }
+
+        this._cachedFilled = imgData;
+        this._cachedFilledMax = max;
+        this._cachedCanvasSize = sizeKey;
         this.ctx.putImageData(imgData, 0, 0);
     },
 
@@ -232,11 +254,28 @@ const Contour = {
 
     renderContourLines(levels, max, scaleX, scaleY) {
         const maxVal = max;
+
+        if (!this._dirty && this._cachedLines && this._cachedLinesLevels === levels && this._cachedLinesMax === max) {
+            this._drawCachedLines(this._cachedLines, maxVal);
+            return;
+        }
+
+        const allLines = [];
         for (let i = 0; i < levels; i++) {
             const level = (i + 1) * (maxVal / (levels + 1));
             const ratio = level / maxVal;
             const lines = this.marchingSquares(level, max, scaleX, scaleY);
+            allLines.push({ level, ratio, lines });
+        }
 
+        this._cachedLines = allLines;
+        this._cachedLinesLevels = levels;
+        this._cachedLinesMax = max;
+        this._drawCachedLines(allLines, maxVal);
+    },
+
+    _drawCachedLines(allLines, maxVal) {
+        allLines.forEach(({ level, ratio, lines }) => {
             this.ctx.strokeStyle = `hsla(${120 - ratio * 120}, 90%, 60%, ${0.4 + ratio * 0.5})`;
             this.ctx.lineWidth = ratio > 0.7 ? 2 : 1;
             this.ctx.beginPath();
@@ -245,7 +284,9 @@ const Contour = {
                 this.ctx.lineTo(line[1][0], line[1][1]);
             });
             this.ctx.stroke();
+        });
 
+        allLines.forEach(({ level, ratio, lines }, i) => {
             if (i % 2 === 1) {
                 this.ctx.fillStyle = `hsla(${120 - ratio * 120}, 90%, 80%, 0.9)`;
                 this.ctx.font = '9px monospace';
@@ -258,15 +299,17 @@ const Contour = {
                     }
                 }
             }
-        }
+        });
     },
 
     render(relicData) {
-        if (relicData) this.relicData = relicData;
+        if (relicData) {
+            this.relicData = relicData;
+            this.generateDataGrid(relicData.latest_data || []);
+        }
         if (!this.relicData) return;
 
         const latestData = this.relicData.latest_data || [];
-        this.generateDataGrid(latestData);
 
         const levels = parseInt(document.getElementById('contour-levels').value);
         const mode = document.getElementById('contour-mode').value;
@@ -295,6 +338,8 @@ const Contour = {
         this.renderFrame(w, h);
         this.renderScaleBar(w, h, max);
         this.renderSensorPositions(latestData, w, h);
+
+        this._dirty = false;
     },
 
     renderFrame(w, h) {
