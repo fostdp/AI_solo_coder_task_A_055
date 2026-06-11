@@ -26,6 +26,7 @@ func PredictScaleGrowth(p *models.ScaleGrowthPrediction) {
 	tempFactor := math.Exp(TEMP_ACTIVATION_ENERGY_RATIO(float64(p.Temperature)))
 
 	growthRate := SULFATE_GROWTH_RATE_BASE * so2Factor * humidityFactor * tempFactor
+	p.GrowthRate = float32(growthRate)
 
 	for h := 1; h <= p.Hours; h++ {
 		hourlyGrowth := growthRate * (1.0 + 0.1*math.Sin(2*math.Pi*float64(h)/24))
@@ -36,6 +37,9 @@ func PredictScaleGrowth(p *models.ScaleGrowthPrediction) {
 			p.PredictedThickness[h] = 10.0
 		}
 	}
+
+	p.FinalThickness = p.PredictedThickness[p.Hours]
+	p.SaturationFactor = float32(1.0 - math.Exp(-float64(p.FinalThickness)/5.0))
 }
 
 func TEMP_ACTIVATION_ENERGY_RATIO(tempC float64) float64 {
